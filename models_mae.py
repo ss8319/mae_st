@@ -196,8 +196,8 @@ class MaskedAutoencoderViT(nn.Module):
 
     def patchify(self, imgs):
         """
-        imgs: (N, 3, H, W)
-        x: (N, L, patch_size**2 *3)
+        imgs: (N, 3, T, H, W)
+        x: (N, L, u * patch_size**2 * 3), L = (T // u) * (H // p) * (W // p)
         """
         N, _, T, H, W = imgs.shape
         p = self.patch_embed.patch_size[0]
@@ -214,8 +214,9 @@ class MaskedAutoencoderViT(nn.Module):
 
     def unpatchify(self, x):
         """
-        x: (N, L, patch_size**2 *3)
-        imgs: (N, 3, H, W)
+        x: (N, L, u * patch_size**2 * 3)
+        imgs: (N, 3, T, H, W)
+        Uses self.patch_info, so patchify must have been called first.
         """
         N, T, H, W, p, u, t, h, w = self.patch_info
 
@@ -261,7 +262,7 @@ class MaskedAutoencoderViT(nn.Module):
 
         x = x.reshape(N, T * L, C)
 
-        # masking: length -> length * mask_ratio
+        # masking: length -> length * (1 - mask_ratio)
         x, mask, ids_restore, ids_keep = self.random_masking(x, mask_ratio)
         x = x.view(N, -1, C)
         # append cls token
@@ -402,7 +403,7 @@ class MaskedAutoencoderViT(nn.Module):
         """
         imgs: [N, 3, T, H, W]
         pred: [N, t*h*w, u*p*p*3]
-        mask: [N*t, h*w], 0 is keep, 1 is remove,
+        mask: [N, t*h*w], 0 is keep, 1 is remove,
         """
         _imgs = torch.index_select(
             imgs,
@@ -430,7 +431,7 @@ class MaskedAutoencoderViT(nn.Module):
 
     def forward(self, imgs, mask_ratio=0.75):
         latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
-        pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
+        pred = self.forward_decoder(latent, ids_restore)  # [N, L, u*p*p*3]
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
 

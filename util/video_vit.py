@@ -13,7 +13,7 @@ logger = logging.get_logger(__name__)
 
 
 class PatchEmbed(nn.Module):
-    """Image to Patch Embedding"""
+    """Video to Patch Embedding: (N, 3, T, H, W) -> (N, T // t_patch_size, (H // p) * (W // p), embed_dim)"""
 
     def __init__(
         self,
