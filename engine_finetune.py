@@ -22,9 +22,9 @@ from timm.utils import accuracy
 
 
 def train_one_epoch(
-    model: torch.nn.Module,
+    model: torch.nn.Module, 
     criterion: torch.nn.Module,
-    data_loader: Iterable,
+    data_loader: Iterable,  # yields (samples, targets)
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     epoch: int,
@@ -35,8 +35,13 @@ def train_one_epoch(
     args=None,
     fp32=False,
 ):
-    model.train(True)
+    model.train(True) # puts the model in training mode
+
+    # initialize a logger that tracks metrics and prints a progress line every 20 iterations
     metric_logger = misc.MetricLogger(delimiter="  ")
+
+    # add meters to track learning rate, CPU memory, CPU memory all, and GPU memory
+    # register the learning rate with the metric logger and prints the current value to 6 decimals 
     metric_logger.add_meter("lr", misc.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     metric_logger.add_meter(
         "cpu_mem", misc.SmoothedValue(window_size=1, fmt="{value:.6f}")
@@ -48,15 +53,23 @@ def train_one_epoch(
         "gpu_mem", misc.SmoothedValue(window_size=1, fmt="{value:.6f}")
     )
     header = "Epoch: [{}]".format(epoch)
-    print_freq = 20
+    print_freq = 20 # print progress line every 20 iterations
 
-    accum_iter = args.accum_iter
+    accum_iter = args.accum_iter # no of gradient accumulation steps
+    # accum_iter is the number of mini batches whose gradients are aggregated before one optimizer update 
 
-    optimizer.zero_grad()
+    optimizer.zero_grad() # start with clean gradients
 
-    if log_writer is not None:
+    # log_writer is a TensorBoard writer 
+    if log_writer is not None: 
         print("log_dir: {}".format(log_writer.log_dir))
 
+
+    ## START OF THE TRAINING LOOP ##
+    ## It's a standard supervised training loop: for each batch, predict, 
+    ## compute the loss against the labels, backpropagate, update the weights, and log. 
+    # # The extras are gradient accumulation, optional MixUp and multi-GPU syncing.
+    # samples are video clips and targets are the corresponding labels
     for data_iter_step, (samples, targets) in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
     ):

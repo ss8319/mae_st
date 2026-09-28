@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# training outputs (checkpoints are several GB each)
+output_pretrain/
+output_finetune/
+output_dir/
+runs/
+*.pth
+*.pyth

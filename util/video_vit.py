@@ -14,10 +14,10 @@ logger = logging.get_logger(__name__)
 
 class PatchEmbed(nn.Module):
     """Video to Patch Embedding: (N, 3, T, H, W) -> (N, T // t_patch_size, (H // p) * (W // p), embed_dim)"""
-
+    
     def __init__(
         self,
-        img_size=224,
+        img_size=224, # size of the input image
         patch_size=16,
         in_chans=3,
         embed_dim=768,
@@ -36,6 +36,9 @@ class PatchEmbed(nn.Module):
             * (img_size[0] // patch_size[0])
             * (frames // t_patch_size)
         )
+
+        # self.input_size is the shape of the token grid: 
+        # how many tokens are there along time, heigh and width
         self.input_size = (
             frames // t_patch_size,
             img_size[0] // patch_size[0],
@@ -55,18 +58,31 @@ class PatchEmbed(nn.Module):
         self.grid_size = img_size[0] // patch_size[0]
         self.t_grid_size = frames // t_patch_size
 
-        kernel_size = [t_patch_size] + list(patch_size)
+        # kernel_size is the size of the convolutional kernel in the time, height and width dimensions
+        kernel_size = [t_patch_size] + list(patch_size) # [t_patch_size, patch_size[0], patch_size[1]]
+        # the kernel_size and the convolution stides are the size of 1 patch 
         self.proj = nn.Conv3d(
             in_chans, embed_dim, kernel_size=kernel_size, stride=kernel_size
         )
 
+
     def forward(self, x):
+        # input is the 5-D video. 
+        # batch, colour, frames, height, width.
         B, C, T, H, W = x.shape
         assert H == self.img_size[0] and W == self.img_size[1], (
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
         )
         assert T == self.frames
+
+        # 1. Apply the Conv3D to the 5-D videos
+        # Example: [B, 3, 16, 224, 224] → [B, 1024, 8, 14, 14], one 1024-number token per cube.
+        # 2. Flatten from dim 3 to the last dim: merges the 14 x 14 grid of cubes into one row of 196
+        # Example: [B, 1024, 8, 14, 14] → [B, 1024, 8, 196], i.e. 8 time steps x 196 spatial positions
+
         x = self.proj(x).flatten(3)
+
+        # reorder of the dimensions
         x = torch.einsum("ncts->ntsc", x)  # [N, T, H*W, C]
         return x
 
@@ -74,13 +90,13 @@ class PatchEmbed(nn.Module):
 class Attention(nn.Module):
     def __init__(
         self,
-        dim,
-        num_heads=8,
-        qkv_bias=False,
-        qk_scale=None,
-        attn_drop=0.0,
-        proj_drop=0.0,
-        input_size=(4, 14, 14),
+        dim, # size of each token
+        num_heads=8, # no of parallel attentions to run
+        qkv_bias=False, # bias term for g/k/v layers
+        qk_scale=None,  #custom score scale
+        attn_drop=0.0, # dropout on the attention weights
+        proj_drop=0.0, # dropout after the output layer
+        input_size=(4, 14, 14), # token grid shape
     ):
         super().__init__()
         assert dim % num_heads == 0, "dim should be divisible by num_heads"
