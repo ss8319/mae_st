@@ -295,7 +295,9 @@ def main(args):
         beta = (0.9, 0.95)
     else:
         beta = args.beta
-    optimizer = torch.optim._multi_tensor.AdamW(
+    # was torch.optim._multi_tensor.AdamW (removed in newer PyTorch); plain AdamW uses the
+    # same multi-tensor ("foreach") implementation automatically on GPU
+    optimizer = torch.optim.AdamW(
         param_groups,
         lr=args.lr,
         betas=beta,
@@ -355,7 +357,8 @@ def main(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print("Training time {}".format(total_time_str))
-    print(torch.cuda.memory_allocated())
+    if torch.cuda.is_available():  # guard added so a CPU-only run works
+        print(torch.cuda.memory_allocated())
     return [checkpoint_path]
 
 

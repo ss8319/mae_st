@@ -2,12 +2,73 @@
 # All rights reserved.
 
 
+import io as _pyio
 import math
 import random
+from types import SimpleNamespace
 
 import numpy as np
 import torch
 import torchvision.io as io
+
+
+# ---------------------------------------------------------------------------
+# PyAV fallback. torchvision's in-memory video reader (_probe_video_from_memory,
+# _read_video_from_memory) was removed in newer torchvision releases. These two
+# functions keep the same inputs/outputs, and are used only when torchvision
+# doesn't provide the originals.
+# ---------------------------------------------------------------------------
+def _pyav_probe_video_from_memory(video_tensor):
+    import av
+    from fractions import Fraction
+
+    with av.open(_pyio.BytesIO(video_tensor.numpy().tobytes())) as c:
+        s = c.streams.video[0]
+        tb = s.time_base
+        if s.duration is not None:
+            duration = float(s.duration * tb)
+        else:
+            duration = (c.duration or 0) / 1e6          # container duration is in microseconds
+        return SimpleNamespace(
+            has_video=True,
+            video_timebase=Fraction(tb.numerator, tb.denominator),
+            video_duration=duration,                     # seconds
+            video_fps=float(s.average_rate),
+            has_audio=False,
+            audio_timebase=Fraction(0, 1),
+            audio_duration=0.0,
+            audio_sample_rate=0.0,
+        )
+
+
+def _pyav_read_video_from_memory(
+    video_tensor, video_min_dimension=0, video_pts_range=(0, -1), **_unused
+):
+    """Returns (frames [T, H, W, 3] uint8, None), like torchvision's reader."""
+    import av
+
+    start_pts, end_pts = video_pts_range
+    frames = []
+    with av.open(_pyio.BytesIO(video_tensor.numpy().tobytes())) as c:
+        s = c.streams.video[0]
+        if start_pts > 0:
+            c.seek(int(start_pts), stream=s, backward=True, any_frame=False)
+        for f in c.decode(s):
+            if f.pts is None or f.pts < start_pts:
+                continue
+            if end_pts != -1 and f.pts > end_pts:
+                break
+            if video_min_dimension > 0:                  # resize so the SHORT side = video_min_dimension
+                scale = video_min_dimension / min(f.width, f.height)
+                f = f.reformat(width=round(f.width * scale), height=round(f.height * scale))
+            frames.append(f.to_ndarray(format="rgb24"))
+    if not frames:
+        return torch.empty(0), None
+    return torch.from_numpy(np.stack(frames)), None
+
+
+_probe_video_from_memory = getattr(io, "_probe_video_from_memory", _pyav_probe_video_from_memory)
+_read_video_from_memory = getattr(io, "_read_video_from_memory", _pyav_read_video_from_memory)
 
 
 def temporal_sampling(frames, start_idx, end_idx, num_samples):
@@ -115,7 +176,7 @@ def decode(
         # The video_meta is empty, fetch the meta data from the raw video.
         if len(video_meta) == 0:
             # Tracking the meta info for selective decoding in the future.
-            meta = io._probe_video_from_memory(video_tensor)
+            meta = _probe_video_from_memory(video_tensor)
             # Using the information from video_meta to perform selective decoding.
             video_meta["video_timebase"] = meta.video_timebase
             video_meta["video_numerator"] = meta.video_timebase.numerator
@@ -153,7 +214,7 @@ def decode(
                 video_end_pts = int(end_idx * pts_per_frame)
 
         # Decode the raw video with the tv decoder.
-        v_frames, _ = io._read_video_from_memory(
+        v_frames, _ = _read_video_from_memory(
             video_tensor,
             seek_frame_margin=1.0,
             read_video_stream="visual" in modalities,
@@ -169,7 +230,7 @@ def decode(
             # failed selective decoding
             decode_all_video = True
             video_start_pts, video_end_pts = 0, -1
-            v_frames, _ = io._read_video_from_memory(
+            v_frames, _ = _read_video_from_memory(
                 video_tensor,
                 seek_frame_margin=1.0,
                 read_video_stream="visual" in modalities,

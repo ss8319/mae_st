@@ -20,13 +20,20 @@ import mae_st.util.logging as logging
 import psutil
 import torch
 import torch.distributed as dist
-import torch.fb.rendezvous.zeus
+# removed: `import torch.fb.rendezvous.zeus` (Meta-internal, not in public PyTorch, and unused in this file)
 from iopath.common.file_io import g_pathmgr as pathmgr
 from mae_st.util.logging import master_print as print
 from torch import inf
 
 
 logger = logging.get_logger(__name__)
+
+# PyTorch >= 2.6 loads checkpoints with weights_only=True, which rejects the argparse.Namespace
+# (`args`) saved inside every checkpoint. Allow just that class, instead of disabling the check.
+if hasattr(torch.serialization, "add_safe_globals"):
+    import argparse
+
+    torch.serialization.add_safe_globals([argparse.Namespace])
 
 
 class SmoothedValue:

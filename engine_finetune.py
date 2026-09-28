@@ -104,7 +104,8 @@ def train_one_epoch(
         if (data_iter_step + 1) % accum_iter == 0:
             optimizer.zero_grad()
 
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():  # guard added so a CPU-only run works
+            torch.cuda.synchronize()
 
         metric_logger.update(loss=loss_value)
         metric_logger.update(cpu_mem=misc.cpu_mem_usage()[0])
