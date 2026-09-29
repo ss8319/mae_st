@@ -237,13 +237,13 @@ class MaskedAutoencoderViT(nn.Module):
     def random_masking(self, x, mask_ratio):
         """
         Perform per-sample random masking by per-sample (per-clip) shuffling.
+        High level idea:
+        Give every token a random number, then sort by it. That shuffles the tokens into a random queue.
+        Keep the front 10% of the queue (156 of 1568) and remove the rest. The encoder sees only those.
+        Remember where each kept token came from (ids_keep), so it gets the right position embedding.
+        Remember how to undo the shuffle (ids_restore), so the decoder can put everything back in grid order 
+        and the loss is computed on the hidden slots.
 
-        Per-sample means each clip in the batch gets its own random mask. 
-        Clip 1 might keep tokens 5, 90, 300…, while clip 2 keeps a completely different set.
-        By shuffling means the masking is done by shuffling the tokens into
-        a random order and keeping the first few, rather than picking tokens one at a time
-        
-        Per-sample shuffling is done by argsort random noise.
         x: [N, L, D], sequence
 
         Input:
@@ -257,10 +257,12 @@ class MaskedAutoencoderViT(nn.Module):
         """
         N, L, D = x.shape  # batch, length, dim
 
-        # len_keep is the number of tokens that survive the masking
+        # Step 1: Calculate len_keep is the number of tokens that survive the masking
         # mask_ratio is the fraction to hide: 0.9 in the recipe (code default 0.75).
         # 1 - mask_ratio is the fraction to keep: 0.1.
         len_keep = int(L * (1 - mask_ratio))
+
+        #Step 2: For each clip, generate random noise
 
         # One random number per token -> a different mask for every clip
         noise = torch.rand(N, L, device=x.device)  # noise in [0, 1) of dimension (N,L)
@@ -286,6 +288,7 @@ class MaskedAutoencoderViT(nn.Module):
         #clip 0:       [0, 3, 4, 1, 5, 2]    
         #clip 1:       [3, 2, 1, 5, 0, 4]    
 
+        # Step 3: Keep the first len_keep tokens
         # keep the first subset as unmasked tokens
         ids_keep = ids_shuffle[:, :len_keep]
         
@@ -298,7 +301,7 @@ class MaskedAutoencoderViT(nn.Module):
         # clip 1:  [[140, 141, 142],     ← E
         #           [120, 121, 122]]     ← C
 
-        # generate the binary mask: 0 is keep, 1 is remove(mask)
+        # Step 4: Generate the binary mask: 0 is keep, 1 is remove(mask)
         mask = torch.ones([N, L], device=x.device)
         mask[:, :len_keep] = 0
         # unshuffle to get the binary mask
@@ -335,7 +338,7 @@ class MaskedAutoencoderViT(nn.Module):
         x, mask, ids_restore, ids_keep = self.random_masking(x, mask_ratio)
         x = x.view(N, -1, C)
         
-        # Step 3: Append cls token to masked_tokens
+        # Step 3: Append cls token to masked tokens
         if self.cls_embed:
             cls_token = self.cls_token
             cls_tokens = cls_token.expand(x.shape[0], -1, -1)
@@ -429,10 +432,10 @@ class MaskedAutoencoderViT(nn.Module):
 
         # ---- 3. Fill the 1412 hidden slots with copies of ONE learned mask token ----
         # repeat(): repeat elements of an array along a specified axis
-        # mask_token is still a matrix of value 0
+        # mask_token: one learned [1, 1, 512] vector (created as zeros, re-initialised normal std 0.02 in initialize_weights)
         mask_tokens = self.mask_token.repeat(N, T * H * W + 0 - x.shape[1], 1)  # [1, 1, 512] -> [N, 1412, 512]
         
-        # concatenate the mask token (with matrix of value 0 as placeholaders) and the unmasked embeddings 
+        # concatenate the unmasked embeddings and the mask tokens (placeholders for the hidden slots)
         x_ = torch.cat([x[:, :, :], mask_tokens], dim=1)  # [N, 156 + 1412 = 1568, 512], still shuffled
         x_ = x_.view([N, T * H * W, C])           # no-op
 
@@ -454,7 +457,7 @@ class MaskedAutoencoderViT(nn.Module):
         # ---- 6. Add the positional embedding for ALL 1568 slots ----
         if self.sep_pos_embed:
             # spatial (196, tiled x8) + temporal (8, each x196) -> [1, 1568, 512] 
-            # decoder_pos_embed_spatial is a matrix of value 0
+            # both are learned (trunc-normal std 0.02 in initialize_weights)
             decoder_pos_embed = self.decoder_pos_embed_spatial.repeat(
                 1, self.input_size[0], 1
             ) + torch.repeat_interleave(
