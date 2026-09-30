@@ -338,7 +338,7 @@ class MaskedAutoencoderViT(nn.Module):
         x, mask, ids_restore, ids_keep = self.random_masking(x, mask_ratio)
         x = x.view(N, -1, C)
         
-        # Step 3: Append cls token to masked tokens
+        # Step 3: Prepend CLS token to the unmasked (visible) tokens
         if self.cls_embed:
             cls_token = self.cls_token
             cls_tokens = cls_token.expand(x.shape[0], -1, -1)
@@ -347,6 +347,7 @@ class MaskedAutoencoderViT(nn.Module):
         # Step 4: Give each unmasked token a position embedding including CLS token, 
         # so it knows where in the video it came from, and add that vector to the token.
         if self.sep_pos_embed:
+            # get the right shape for the spatial and temporal positional embedding
             pos_embed = self.pos_embed_spatial.repeat(
                 1, self.input_size[0], 1
             ) + torch.repeat_interleave(
@@ -356,7 +357,7 @@ class MaskedAutoencoderViT(nn.Module):
             )
             pos_embed = pos_embed.expand(x.shape[0], -1, -1)
             # gather(input, dim, index) means "along dim, take the elements at the positions listed in index."
-            # masking dropped and reordered tokens, so gather drops and reorders the positional embeddings the same way
+            # keeps only the kept tokens' embeddings based on ids_keep
             pos_embed = torch.gather(
                 pos_embed,
                 dim=1,
@@ -382,6 +383,7 @@ class MaskedAutoencoderViT(nn.Module):
                 index=ids_keep.unsqueeze(-1).repeat(1, 1, pos_embed.shape[2]),
             )
             if self.cls_embed:
+                # concatenate both positional embedding of patch tokens with positional embedding of CLS token
                 pos_embed = torch.cat(
                     [
                         self.pos_embed[:, :1, :].expand(x.shape[0], -1, -1),
@@ -389,7 +391,7 @@ class MaskedAutoencoderViT(nn.Module):
                     ],
                     1,
                 )
-        # add the positional embedding
+        # ADD the positional embeddings
         x = x.view([N, -1, C]) + pos_embed
 
         # apply Transformer blocks
