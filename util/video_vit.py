@@ -114,7 +114,10 @@ class Attention(nn.Module):
         assert input_size[1] == input_size[2]
 
     def forward(self, x):
+        # Self-attention: q, k, v all come from the same x
         B, N, C = x.shape
+        # Step 1: linear layers that project x into query, key, value (3 separate Linear 1024 -> 1024)
+        # Step 2: split into 16 heads of 64 -> [B, N, 16, 64] -> permute -> [B, 16, N, 64]
         q = (
             self.q(x)
             .reshape(B, N, self.num_heads, C // self.num_heads)
@@ -131,14 +134,20 @@ class Attention(nn.Module):
             .permute(0, 2, 1, 3)
         )
 
+        # Step 3: scores = every query vs every key, scaled by 1/sqrt(64) -> [B, 16, N, N]
         attn = (q @ k.transpose(-2, -1)) * self.scale
 
+        # Step 4: Apply softmax
         attn = attn.softmax(dim=-1)
 
+        # Step 5: each token collects info from the tokens it chose to listen to,
+        # then the 16 heads' (ViT-L) results are joined back into one vector per token
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+
+        # Step 6: one final layer blends what the 16 heads found
         x = self.proj(x)
-        x = self.proj_drop(x)
-        x = x.view(B, -1, C)
+        x = self.proj_drop(x)   # does nothing here (dropout is 0)
+        x = x.view(B, -1, C)    # does nothing here (shape already right)
         return x
 
 
@@ -178,7 +187,7 @@ class Block(nn.Module):
         self.mlp = Mlp(
             in_features=dim,
             hidden_features=mlp_hidden_dim,
-            act_layer=act_layer,
+            act_layer=act_layer, # activation layer
             drop=drop,
         )
 

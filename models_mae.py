@@ -30,22 +30,22 @@ class MaskedAutoencoderViT(nn.Module):
         patch_size=16,
         in_chans=3,
         embed_dim=1024,
-        depth=24,
-        num_heads=16,
-        decoder_embed_dim=512,
-        decoder_depth=8,
-        decoder_num_heads=16,
-        mlp_ratio=4.0,
-        norm_layer=nn.LayerNorm,
+        depth=24,                   # encoder transformer blocks
+        num_heads=16,               # heads per encoder block (1024 / 16 = 64 dims each)
+        decoder_embed_dim=512,      # decoder width (decoder_embed: 1024 -> 512)
+        decoder_depth=8,            # decoder blocks (recipe overrides to 4)
+        decoder_num_heads=16,       # heads per decoder block (512 / 16 = 32 dims each)
+        mlp_ratio=4.0,              # MLP hidden size = 4 x width (4096 encoder, 2048 decoder)
+        norm_layer=nn.LayerNorm,    # normalisation inside every block
         norm_pix_loss=False,
-        num_frames=16,
-        t_patch_size=4,
+        num_frames=16,              # frames per input clip
+        t_patch_size=4,             # frames per video cube in time 
         patch_embed=video_vit.PatchEmbed,
         no_qkv_bias=False,
-        sep_pos_embed=False,
+        sep_pos_embed=False,        # main_pretrain.py sets this to True
         trunc_init=False,
-        cls_embed=False,
-        pred_t_dim=8,
+        cls_embed=False,            # main_pretrain.py sets this to True
+        pred_t_dim=8,               # frames the loss scores; per token: t_patch_size * pred_t_dim / num_frames (recipe: 1)
         **kwargs,
     ):
         super().__init__()
@@ -330,7 +330,7 @@ class MaskedAutoencoderViT(nn.Module):
         # L is the no of embedding positions in the space dimensions after the Conv3D
         # C is the size of the embedding
 
-        x = x.reshape(N, T * L, C) # flatten into 1 sequence
+        x = x.reshape(N, T * L, C) # Flatten into 1 sequence
    
 
         # Step 2: MAE Random masking; applied to embeddings (not pixels)
@@ -421,7 +421,7 @@ class MaskedAutoencoderViT(nn.Module):
         
         # Shapes below: recipe values (90% mask -> 156 kept), ViT-L encoder, 512-wide decoder
 
-        # ---- 1. Grid size of the whole video before masking (the decoder rebuilds all of it) ----
+        # ---- 1. Reconstruct the Grid size of the whole video before encoder's masking ----
         # x is embedding of size [N, 156, 1024]  
         N = x.shape[0]                            # batch size
         T = self.patch_embed.t_grid_size          # 8 time steps
@@ -432,8 +432,8 @@ class MaskedAutoencoderViT(nn.Module):
         x = self.decoder_embed(x)                 # [N, 156, 1024] -> [N, 156, 512]
         C = x.shape[-1]                           # 512
 
-        # ---- 3. Fill the 1412 hidden slots with copies of ONE learned mask token ----
-        # repeat(): repeat elements of an array along a specified axis
+        # ---- 3. Fill the 1412 hidden slots (correspond to masked tokens) with copies of ONE learned mask token each ----
+        # repeat(N, 1412, 1): copy the tensor N times along dim 0, 1412 times along dim 1, once along dim 2
         # mask_token: one learned [1, 1, 512] vector (created as zeros, re-initialised normal std 0.02 in initialize_weights)
         mask_tokens = self.mask_token.repeat(N, T * H * W + 0 - x.shape[1], 1)  # [1, 1, 512] -> [N, 1412, 512]
         
@@ -497,9 +497,10 @@ class MaskedAutoencoderViT(nn.Module):
         x = self.decoder_norm(x)                  # final LayerNorm
 
         # ---- 8. Decoder turns each token into pixels ----
-        # Transformation that happens [N, 1569, 512]  →  [N, 1569, 768]
+        # One linear layer, applied to each token separately: [N, 1569, 512] -> [N, 1569, 768]
         # 512 is the decoder's embedding size while 768 is the predicted pixels for 1 patch
-        # 1 patch: 16 x 16 pixels x 3 colors = 768 actual pixel values
+        # 768 = t_pred_patch_size(1) x 16 x 16 x 3; video cube is 2 frames, but pred_t_dim=8 of 16 -> predict 1 frame
+        # so these line up with the target patches forward_loss builds from those 8 frames
         x = self.decoder_pred(x) # linear layer
 
         if requires_t_shape:
