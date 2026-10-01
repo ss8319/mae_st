@@ -27,7 +27,7 @@ from mae_st.util.misc import NativeScalerWithGradNormCount as NativeScaler
 from tensorboard.compat.tensorflow_stub.io.gfile import register_filesystem
 from torch.utils.tensorboard import SummaryWriter
 
-
+# argparse is a built-in Python module used to parse command-line arguments and options
 def get_args_parser():
     parser = argparse.ArgumentParser("MAE pre-training", add_help=False)
     parser.add_argument(
@@ -123,7 +123,7 @@ def get_args_parser():
     parser.add_argument(
         "--start_epoch", default=0, type=int, metavar="N", help="start epoch"
     )
-    parser.add_argument("--num_workers", default=10, type=int)
+    parser.add_argument("--num_workers", default=10, type=int) # no of backgorund CPU processes. ie for loading and decoding videos in parallel
     parser.add_argument(
         "--pin_mem",
         action="store_true",
@@ -136,7 +136,7 @@ def get_args_parser():
     parser.add_argument(
         "--world_size", default=1, type=int, help="number of distributed processes"
     )
-    parser.add_argument("--local_rank", default=-1, type=int)
+    parser.add_argument("--local_rank", default=-1, type=int) # which GPU this process uses on its own machine
     parser.add_argument("--dist_on_itp", action="store_true")
     parser.add_argument("--no_env", action="store_true")
 
@@ -202,7 +202,7 @@ def get_args_parser():
 
 
 def main(args):
-    misc.init_distributed_mode(args)
+    misc.init_distributed_mode(args) # setup multi-GPU distributed training
 
     print("job dir: {}".format(os.path.dirname(os.path.realpath(__file__))))
     print("{}".format(args).replace(", ", ",\n"))
@@ -210,6 +210,8 @@ def main(args):
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
+    # The seed is the starting number for the random number generators. The same seed gives the same 
+    # "random" numbers every run, so results can be reproduced.
     seed = args.seed + misc.get_rank()
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -227,8 +229,8 @@ def main(args):
         jitter_scales_relative=args.jitter_scales_relative,
     )
     if args.distributed:
-        num_tasks = misc.get_world_size()
-        global_rank = misc.get_rank()
+        num_tasks = misc.get_world_size() # total no of GPUs (processes) in training run across all machines
+        global_rank = misc.get_rank() # GPU ID number
         sampler_train = torch.utils.data.DistributedSampler(
             dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
         )
@@ -266,10 +268,13 @@ def main(args):
     model_without_ddp = model
     print("Model = %s" % str(model_without_ddp))
 
+    # effective batch size is the batch size x gradient accumulation steps and no of GPUs used
     eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
 
     if args.lr is None:  # only base_lr is specified
-        args.lr = args.blr * eff_batch_size / 256
+        args.lr = args.blr * eff_batch_size / 256 
+        # proportional scaling if the effective batch size is larger we use a larger lr 
+        # and hence a larger update
 
     print("base lr: %.2e" % (args.lr * 256 / eff_batch_size))
     print("actual lr: %.2e" % args.lr)
@@ -295,7 +300,9 @@ def main(args):
         beta = (0.9, 0.95)
     else:
         beta = args.beta
-    optimizer = torch.optim._multi_tensor.AdamW(
+    # was torch.optim._multi_tensor.AdamW (removed in newer PyTorch); plain AdamW uses the
+    # same multi-tensor ("foreach") implementation automatically on GPU
+    optimizer = torch.optim.AdamW(
         param_groups,
         lr=args.lr,
         betas=beta,
@@ -355,7 +362,8 @@ def main(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print("Training time {}".format(total_time_str))
-    print(torch.cuda.memory_allocated())
+    if torch.cuda.is_available():  # guard added so a CPU-only run works
+        print(torch.cuda.memory_allocated())
     return [checkpoint_path]
 
 

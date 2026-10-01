@@ -441,6 +441,11 @@ def main(args):
         print(msg)
 
         # manually initialize fc layer
+        # model.head is the final linear layer, nn.Linear(embed_dim, num_classes) (models_vit.py).
+        # It turns the encoder's features into class scores. 
+        # trunc_normal_(..., std=2e-5) comes from timm (imported at the top of this file). It fills the weights
+        # from a truncated normal; the cutoffs are absolute (a=-2, b=2), far beyond std 2e-5, so in practice it is
+        # a normal with tiny std: the head starts near zero and early predictions are near-uniform.
         trunc_normal_(model.head.weight, std=2e-5)
 
     model.to(device)
